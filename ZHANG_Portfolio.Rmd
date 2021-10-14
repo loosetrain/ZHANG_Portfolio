@@ -1,0 +1,103 @@
+---
+title: "VIS2128 ZHANG Portfolio"
+author: "Lamei Zhang"
+date: "10/14/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+###Loading libraries
+
+```{r, message = FALSE, warning = FALSE, echo = FALSE, results = FALSE}
+library(leaflet)
+library(sf)
+library(tidyverse)
+library(tidycensus)
+library(ggthemes)
+library(ggspatial)
+library(htmlwidgets)
+library(tidytransit)
+```
+
+
+##Maps of Boston & Cambridge
+
+Using various techniques in R and ArcGIS, I display geospatial analysis in Boston and neighboring Cambridge.
+
+###Interactive Map (Assignment #6)
+
+```{r, r, message = FALSE, warning = FALSE, echo = FALSE}
+Middlesex_White <- get_decennial(geography = "block",
+                          state = "MA", county = "Middlesex",
+                          year = 2010,
+                          output = "wide",
+                          variables = c(tot_pop = 'P008001',
+                                        white_pop = 'P005003'),
+                          geometry = TRUE)
+
+Middlesex_Hispanic <- get_decennial(geography = "block",
+                                    state = "MA", county = "Middlesex",
+                                    year = 2010,
+                                    output = "wide",
+                                    variables = c(tot_pop = 'P008001',
+                                                  his_pop = 'P009002'),
+                                    geometry = TRUE)
+```
+
+```{r, message = FALSE, warning = FALSE, echo = FALSE}
+Middlesex_White <- Middlesex_White %>%
+  mutate(pct_white = white_pop / tot_pop) %>%
+  filter(tot_pop > 0)
+
+Middlesex_Hispanic <- Middlesex_Hispanic %>%
+  mutate(pct_his = his_pop / tot_pop) %>%
+  filter(tot_pop > 0)
+
+```
+
+```{r, message = FALSE, warning = FALSE, echo = FALSE}
+MA_state_plane <- "+proj=lcc +lat_1=42.68333333333333 +lat_2=41.71666666666667 +lat_0=41 +lon_0=-71.5 +x_0=200000.0001016002 +y_0=750000 +ellps=GRS80 +datum=NAD83 +to_meter=0.3048006096012192 +no_defs"
+```
+
+```{r, message = FALSE, warning = FALSE, echo = FALSE}
+
+MA_White_palette <- colorNumeric(c("green", "red"), Middlesex_White$pct_white)
+
+White_map3 <- leaflet(Middlesex_White) %>%
+  addProviderTiles("Stamen.TonerLite") %>%
+  addPolygons(color = ~MA_White_palette(pct_white), stroke = FALSE, fillOpacity = 0.7,
+              highlightOptions = highlightOptions(fillColor = "darkorange", fillOpacity = 0.9),
+              label = Middlesex_White$NAME,
+              popup = paste("Total population: ", Middlesex_White$tot_pop, "<br/>",
+                            "White (non-Hispanic) population: ", Middlesex_White$bl_pop, " (", 
+                            round(Middlesex_White$pct_white * 100, 1), "%)", sep = "")) %>%
+    addLegend("bottomright", pal = MA_White_palette, values = ~pct_white,
+    title = "Percent of population<br/>identifying as White alone",
+    labFormat = labelFormat(suffix = "%",
+                            transform = function(x) 100 * x),
+    opacity = 1)
+
+White_map3
+
+```
+
+###Walkability of Philadelphia (Assignment #4)
+
+
+
+
+###Raster Display of Philadelphia (Assignment #5)
+
+
+
+
+###Georeferencing historic Chelsea (Assignment #2)
+
+
+
+
+###Calculating Density in Cambridge (Assignment #3)
+

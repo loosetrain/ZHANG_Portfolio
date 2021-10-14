@@ -1,0 +1,582 @@
+---
+title: "Combined_Assgn 4&5"
+author: "Lamei Zhang, Jaida Nabayan, Akiva Blander"
+date: "10/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+```
+
+```{r, echo=FALSE}
+
+```
+
+## Starting Java
+
+```{r}
+
+options(java.parameters = "-Xmx2G")
+
+```
+
+## Loading Packages
+
+```{r, echo=FALSE}
+
+library(r5r)
+library(osmextract)
+library(tidyverse)
+library(sf)
+library(ggthemes)
+library(ggspatial)
+library(tigris)
+library(wesanderson)
+library(tidytransit)
+library(stars)
+
+```
+
+## Load GTFS file, State & City Plane
+
+```{r}
+
+download.file("http://www3.septa.org/developer/submit.gif", file.path("networks2", "PHLfs2.zip"), mode = "wb", quiet = TRUE)
+
+PHL_file <- oe_match("Philadelphia County")
+
+PHL_streets <- oe_read(PHL_file$url, 
+                   provider = "openstreetmap_fr", 
+                   download_directory = "networks2", 
+                   layer = "lines", 
+                   quiet = TRUE) %>%
+  filter(!is.na(highway))
+
+PA_state_plane <- "+proj=tmerc +lat_0=40.009 +lon_0=-75.11799999999999 +k=1 +x_0=18.79 +y_0=35.79 +ellps=WGS84 +units=m +no_defs"
+
+PHL_city_limits <- places("Pennsylvania") %>%
+  filter(NAME == "Philadelphia") %>%
+  st_transform(crs = st_crs(PHL_streets))
+
+PHL_streets <- PHL_streets[PHL_city_limits,]
+
+```
+
+## Load School data
+
+```{r}
+
+PHL_school <- oe_read(PHL_file$url, 
+                   provider = "openstreetmap_fr", 
+                   download_directory = "networks", 
+                   layer = "points", 
+                   quiet = TRUE) %>%
+  filter(str_detect(other_tags, '"amenity"=>"school"')) %>%
+  st_filter(PHL_city_limits) %>%
+  rename(id = osm_id)
+
+```
+
+
+## Load bank data
+
+```{r}
+
+PHL_banks <- oe_read(PHL_file$url, 
+                   provider = "openstreetmap_fr", 
+                   download_directory = "networks", 
+                   layer = "points", 
+                   quiet = TRUE) %>%
+  filter(str_detect(other_tags, '"amenity"=>"bank"')) %>%
+  st_filter(PHL_city_limits) %>%
+  rename(id = osm_id)
+
+```
+
+## Load library data
+
+```{r}
+
+PHL_library <- oe_read(PHL_file$url, 
+                   provider = "openstreetmap_fr", 
+                   download_directory = "networks", 
+                   layer = "points", 
+                   quiet = TRUE) %>%
+  filter(str_detect(other_tags, '"amenity"=>"library"')) %>%
+  st_filter(PHL_city_limits) %>%
+  rename(id = osm_id)
+
+```
+
+## Create grid
+
+```{r}
+
+grid <- st_sf(st_make_grid(PHL_city_limits, 
+                           square = FALSE, 
+                           n = c(100,100),
+                           what = "polygons")) %>%
+  st_filter(PHL_city_limits) 
+
+colnames(grid) <- "geometry"
+st_geometry(grid) <- "geometry"
+
+grid2 <- st_sf(st_make_grid(PHL_city_limits, 
+                           square = FALSE, 
+                           n = c(100,100),
+                           what = "polygons")) %>%
+  st_filter(PHL_city_limits) 
+
+colnames(grid2) <- "geometry"
+st_geometry(grid2) <- "geometry"
+
+grid3 <- st_sf(st_make_grid(PHL_city_limits, 
+                           square = FALSE, 
+                           n = c(100,100),
+                           what = "polygons")) %>%
+  st_filter(PHL_city_limits) 
+
+colnames(grid3) <- "geometry"
+st_geometry(grid3) <- "geometry"
+
+grid <- grid %>%
+  mutate(id = seq(1, length(grid$geometry), by=1))
+
+grid2 <- grid2 %>%
+  mutate(id = seq(1, length(grid2$geometry), by=1))
+
+grid3 <- grid3 %>%
+  mutate(id = seq(1, length(grid2$geometry), by=1))
+
+grid_points <- st_centroid(grid)
+
+grid_points2 <- st_centroid(grid2)
+
+grid_points3 <- st_centroid(grid2)
+
+```
+
+## Turn on r5r
+```{r}
+
+r5r_core <- setup_r5("networks2", verbose = FALSE)
+
+```
+## Define travel time for schools and banks
+
+```{r}
+ttm <- travel_time_matrix(r5r_core = r5r_core,
+                          origins = PHL_school,
+                          destinations = grid_points,
+                          mode = c("WALK", "TRANSIT"),
+                          departure_datetime = as.POSIXct("15-11-2021 14:00:00",
+                                 format = "%d-%m-%Y %H:%M:%S"),
+                          max_walk_dist = 400,
+                          max_trip_duration = 90,
+                          verbose = FALSE)
+
+ttm_bank <- travel_time_matrix(r5r_core = r5r_core,
+                          origins = PHL_banks,
+                          destinations = grid_points2,
+                          mode = c("WALK", "TRANSIT"),
+                          departure_datetime = as.POSIXct("15-11-2021 14:00:00",
+                                 format = "%d-%m-%Y %H:%M:%S"),
+                          max_walk_dist = 400,
+                          max_trip_duration = 90,
+                          verbose = FALSE)
+
+ttm_library <- travel_time_matrix(r5r_core = r5r_core,
+                          origins = PHL_library,
+                          destinations = grid_points3,
+                          mode = c("WALK", "TRANSIT"),
+                          departure_datetime = as.POSIXct("15-11-2021 14:00:00",
+                                 format = "%d-%m-%Y %H:%M:%S"),
+                          max_walk_dist = 400,
+                          max_trip_duration = 90,
+                          verbose = FALSE)
+
+tt_wide <- ttm %>%
+  pivot_wider(names_from = fromId, 
+              names_prefix = "from", values_from = travel_time) %>%
+  rename(id = toId) %>% 
+  merge(grid) %>%
+  replace(is.na(.), 999) %>%
+  rowwise() %>%
+  mutate(from_any = min(c_across(starts_with("from")), na.rm = TRUE))
+
+tt_wide_banks <- ttm_bank %>%
+  pivot_wider(names_from = fromId, 
+              names_prefix = "from", values_from = travel_time) %>%
+  rename(id = toId) %>% 
+  merge(grid2) %>%
+  replace(is.na(.), 999) %>%
+  rowwise() %>%
+  mutate(from_any = min(c_across(starts_with("from")), na.rm = TRUE))  
+  
+tt_wide_library <- ttm_library %>%
+  pivot_wider(names_from = fromId, 
+              names_prefix = "from", values_from = travel_time) %>%
+  rename(id = toId) %>% 
+  merge(grid3) %>%
+  replace(is.na(.), 999) %>%
+  rowwise() %>%
+  mutate(from_any = min(c_across(starts_with("from")), na.rm = TRUE))  
+
+st_geometry(tt_wide) <- "geometry"
+
+st_geometry(tt_wide_banks) <- "geometry"
+
+st_geometry(tt_wide_library) <- "geometry"
+```
+
+## Travel Time to Nearest Bank
+
+```{r}
+
+ggplot(PHL_streets) +
+  geom_sf(data = tt_wide_banks, 
+          aes(fill = from_any), 
+          color = NA) +
+  geom_sf(alpha = 0.2) +
+  scale_fill_gradient2(low = "blue", mid = "yellow", high = "red", 
+                       midpoint = 40,
+        name = "Transit Travel\ntime to the\nnearest bank\n(minutes)") +
+  coord_sf(crs = PA_state_plane) +
+  theme_map()
+
+```
+This map shows the time travel relationship between banks locations and transit stops. The color palette used to indicate the accessibility blends well with the data and is easy to read. The trend of where we see banks across all maps is where there are large arterial roads. This argument could be made for libraries and schools too.  
+
+## Travel Time to Nearest School
+
+```{r}
+
+ggplot(PHL_streets) +
+  geom_sf(data = tt_wide, 
+          aes(fill = from_any), 
+          color = NA) +
+  geom_sf(alpha = 0.2) +
+  scale_fill_gradient2(low = "blue", mid = "yellow", high = "red", 
+                       midpoint = 40,
+        name = "Transit Travel\ntime to the\nnearest school\n(minutes)") +
+  coord_sf(crs = PA_state_plane) +
+  theme_map()
+
+```
+This map shows the time travel relationship between schools and transit stops. Not including the areas that are white, there is a region in the northwestern section that is consistently orange/red on maps. This implies that it is very hard for that area to access schools via transit.
+
+
+## Travel Time to Nearest Library
+
+```{r}
+
+ggplot(PHL_streets) +
+  geom_sf(data = tt_wide_library, 
+          aes(fill = from_any), 
+          color = NA) +
+  geom_sf(alpha = 0.2) +
+  scale_fill_gradient2(low = "blue", mid = "yellow", high = "red", 
+                       midpoint = 40,
+        name = "Transit Travel\ntime to the\nnearest library\n(minutes)") +
+  coord_sf(crs = PA_state_plane) +
+  theme_map()
+
+```
+This map shows the travel time relationship between libraries and transit stops in Philadelphia. The map has good color patterns to highlight this relationship. However, a point of contention exists for the hours in which the library is open, and when most public library users are available to go. 
+
+## Load isochrome palette
+
+```{r}
+iso_pallete <- wes_palette("Zissou1", n = 5)
+
+iso10min <- tt_wide[tt_wide$from_any < 11,] %>%
+  st_union()
+
+iso20min <- tt_wide[tt_wide$from_any < 21,] %>%
+  st_union()
+
+iso30min <- tt_wide[tt_wide$from_any < 31,] %>%
+  st_union()
+```
+
+
+```{r}
+
+iso_pallete_bank <- wes_palette("Royal2")
+
+iso10min_banks <- tt_wide_banks[tt_wide_banks$from_any < 11,] %>%
+  st_union()
+
+iso20min_banks <- tt_wide_banks[tt_wide_banks$from_any < 21,] %>%
+  st_union()
+
+iso30min_banks <- tt_wide_banks[tt_wide_banks$from_any < 31,] %>%
+  st_union()
+
+```
+
+```{r}
+
+iso_pallete_library <- wes_palette("GrandBudapest1") 
+
+iso10min_library <- tt_wide_library[tt_wide_library$from_any < 11,] %>% 
+  st_union() 
+
+iso20min_library <- tt_wide_library[tt_wide_library$from_any < 21,] %>% 
+  st_union() 
+
+iso30min_library <- tt_wide_library[tt_wide_library$from_any < 31,] %>% 
+  st_union() 
+
+```
+
+
+### Plot isochromes
+
+## School transit travel (isochrome)
+
+```{r}
+
+ggplot(PHL_streets) +
+  geom_sf(data = iso30min, 
+          aes(fill = "Area within 30 minutes"), 
+          color = NA) +
+  geom_sf(data = iso20min, 
+          aes(fill = "Area within 20 minutes"), 
+          color = NA) +
+  geom_sf(data = iso10min, 
+          aes(fill = "Area within 10 minutes"), 
+          color = NA) +
+  geom_sf(alpha = 0.2) +
+  scale_fill_manual(values = c(iso_pallete[1], 
+                               iso_pallete[3],
+                               iso_pallete[5]),
+        name = "Transit Travel\ntime to the\nnearest school\n(minutes)") +
+  coord_sf(crs = PA_state_plane) +
+  theme_map()
+
+```
+This map shows the travel time relationship between schools and transit stops in Philadelphia. The travel time indicated was 11/15/2021 at 2pm. This map is misleading because although it appears there are a lot of schools in Philadelphia, it may not account for a student going to school that is not nearest to your house.  
+
+
+## Bank transit travel (isochrome)
+
+```{r}
+
+ggplot(PHL_streets) +
+  geom_sf(data = iso30min_banks, 
+          aes(fill = "Area within 30 minutes"), 
+          color = NA) +
+  geom_sf(data = iso20min_banks, 
+          aes(fill = "Area within 20 minutes"), 
+          color = NA) +
+  geom_sf(data = iso10min_banks, 
+          aes(fill = "Area within 10 minutes"), 
+          color = NA) +
+  geom_sf(alpha = 0.2) +
+  scale_fill_manual(values = c(iso_pallete_bank[3], 
+                               iso_pallete_bank[4],
+                               iso_pallete_bank[5]),
+        name = "Transit Travel\ntime to the\nnearest bank\n(minutes)") +
+  coord_sf(crs = PA_state_plane) +
+  theme_map()
+
+```
+This map shows the travel relationship between banks and transit stops in Philadelphia. The travel time indicated was 11/15/2021 at 2pm. This map has interesting data for financial access, but it is hard to read due to the color palette selected. There are a lot of banks that are accessible via transit stops throughout the city of Philadelphia. This is also misleading because not everyone banks at the same location or company. 
+
+
+## Library transit travel (isochrome)
+
+```{r}
+
+ggplot(PHL_streets) + 
+  geom_sf(data = iso30min_library,  
+          aes(fill = "Area within 30 minutes"),  
+          color = NA) + 
+  geom_sf(data = iso20min_library,  
+          aes(fill = "Area within 20 minutes"),  
+          color = NA) + 
+  geom_sf(data = iso10min_library,  
+          aes(fill = "Area within 10 minutes"),  
+          color = NA) + 
+  geom_sf(alpha = 0.2) + 
+  scale_fill_manual(values = c(iso_pallete_library[1],
+                               iso_pallete_library[2], 
+                               iso_pallete_library[3]), 
+        name = "Transit Travel\ntime to the\nnearest library\n(minutes)") + 
+  coord_sf(crs = PA_state_plane) + 
+  theme_map() 
+
+```
+This map shows the travel time relationship between libraries and transit stops in Philadelphia. The travel time indicated was 11/15/2021 at 2pm. This map indicates that libraries are relatively accessible via the transit stops. Most are within 20 minutes in concentrated areas. The color palette used gives a clear distinction of the farthest time travels. 
+
+
+### Displaying accessibility thru raster files
+
+```{r}
+
+PHL_transit <- read_gtfs(file.path("networks2", "PHLfs.zip"))
+
+```
+
+```{r}
+
+transit_stops <- st_as_sf(PHL_transit$stops, 
+                          coords = c("stop_lon", "stop_lat"), 
+                          crs =st_crs(grid))
+
+transit_grid <- grid %>%
+  mutate(num_stops = lengths(st_covers(grid, transit_stops)))
+
+transit_grid_school <- grid %>%
+  mutate(num_stops = lengths(st_covers(grid, PHL_school)))
+
+transit_points <- st_centroid(transit_grid)
+
+transit_points_school <- st_centroid(transit_grid_school)
+
+
+```
+
+## Transit Accessibility
+
+```{r}
+
+transit_access <- accessibility(r5r_core,
+                        origins = transit_points,
+                        destinations = transit_points,
+                        mode = "WALK",
+                        opportunities_colname = "num_stops",
+                        decay_function = "step",
+                        cutoffs = 11,
+                        departure_datetime = as.POSIXct("15-11-2021 14:00:00",
+                                 format = "%d-%m-%Y %H:%M:%S"),
+                        max_walk_dist = 500,
+                        time_window = 60,
+                        percentiles = 50,
+                        verbose = FALSE) %>%
+  mutate(id = as.numeric(from_id)) %>%
+  merge(grid)  
+
+st_geometry(transit_access) <- "geometry"
+
+```
+```{r}
+
+transit_access2 <- accessibility(r5r_core,
+                        origins = transit_points,
+                        destinations = transit_points,
+                        mode = "WALK",
+                        opportunities_colname = "num_stops",
+                        decay_function = "exponential",
+                        cutoffs = 5,
+                        departure_datetime = as.POSIXct("15-11-2021 14:00:00",
+                                 format = "%d-%m-%Y %H:%M:%S"),
+                        max_walk_dist = 500,
+                        time_window = 60,
+                        percentiles = 50,
+                        verbose = FALSE) %>%
+  mutate(id = as.numeric(from_id)) %>%
+  merge(grid)  
+
+st_geometry(transit_access2) <- "geometry"
+
+```
+```{r}
+
+access_poly <- st_read("PHL_access.geojson", quiet=TRUE)
+
+access_raster <- st_rasterize(access_poly["accessibility"], 
+                              nx = 100, ny = 100) 
+
+plot(access_raster)
+
+ggplot(PHL_streets) +
+  geom_stars(data = access_raster) +
+  geom_sf(color = "white", alpha = 0.2) +
+  scale_fill_viridis_c(na.value = NA, 
+                       option="A",
+                       name = "Pedestrian access to\ntransit stops") +
+  theme_void()
+  
+access_poly2 <- st_as_sf(access_raster, as_points = FALSE, merge = TRUE)
+
+ggplot(PHL_streets) +
+  geom_sf(data = access_poly2, aes(fill = accessibility), color = "gray") +
+  scale_fill_viridis_c(na.value = NA, 
+                       option="A",
+                       name = "Pedestrian access to\ntransit stops") +
+  theme_void()
+
+
+```
+From this map you can see that the highest amount of accessibility is centralized in lower Philadelphia. This indicates that a lot of accessibility is focused on the downtown area, and the further you go from this region, the less accessible it is. This map relatively is not a good example because it is hard to read, and this is not the best technique to interpret this map.  
+
+```{r}
+
+school_access <- accessibility(r5r_core,
+                        origins = transit_points_school,
+                        destinations = transit_points_school,
+                        mode = "WALK",
+                        opportunities_colname = "num_stops",
+                        decay_function = "exponential",
+                        cutoffs = 5,
+                        departure_datetime = as.POSIXct("15-11-2021 14:00:00",
+                                 format = "%d-%m-%Y %H:%M:%S"),
+                        max_walk_dist = 500,
+                        time_window = 60,
+                        percentiles = 50,
+                        verbose = FALSE) %>%
+  mutate(id = as.numeric(from_id)) %>%
+  merge(grid)
+
+st_geometry(school_access) <- "geometry"
+
+```
+
+```{r}
+
+stop_r5(r5r_core)
+
+```
+```{r}
+rJava::.jgc(R.gc = TRUE)
+
+```
+
+```{r}
+st_write(school_access, 'PHL_school_access.geojson', append=FALSE, quiet=TRUE )
+```
+
+```{r}
+
+access_poly2 <- st_read("PHL_school_access.geojson", quiet = TRUE)
+
+access_raster2 <- st_rasterize(access_poly2["accessibility"],
+                            nx = 100, ny = 100)
+plot(access_raster2)
+
+```
+
+## School Accessibility
+
+```{r}
+
+ggplot(PHL_streets) +
+  geom_stars(data = access_raster2) +
+  geom_sf(color = "white", alpha = 0.1) +
+  scale_fill_viridis_c(na.value = NA, 
+                       option="A",
+                       name = "Pedestrian access to\nschools") +
+  theme_void()
+
+```
+
+Unlike the other maps that shows downtown is accessible, this shows that northern and western parts of Philadelphia are more pedestrian accessible for schools.  
+
+### Contribution Statement 
+
+Each group member chose one transit variable and one amenity to explore with the maps assignment. Lamei chose to explore access through schools and transit systems. Jaida chose to explore access through transit systems and libraries. Akiva chose to explore access through transit systems and banks. All teammates equally contributed to the combined assignment and helped to write descriptions for the maps. Our group decided to pick the prettiest maps produced in relation to color schemes, patterns discovered, and layout. Further, we chose maps that had distinct patterns visible through the data chosen. The data for the exploration was chosen amongst the teammates at their own discretion. The points should be evenly distributed amongst all teammates. 
